@@ -1,0 +1,152 @@
+body {
+    padding: 10px;
+}
+
+/*
+div {
+    border: 2px solid;
+}
+*/
+
+
+label,input {
+    display:flex;
+    flex-direction:column;
+}
+
+div p {
+    margin-bottom: 0;
+}
+
+.bid-area {
+    display: flex;
+    justify-content: space-between;
+}
+
+.bid-amount {
+    display: inline-block;
+    width: 100px;
+}
+
+.bid-amount-label {
+    display: inline-block;
+    width: 40px;
+    text-align: right;
+}
+
+.cat-box {
+    width: 80%;
+}
+
+.create-form {
+    width: 60%;
+    margin: auto;
+}
+
+.comment-area {
+    width: 50%;
+    height: 5rem;
+    resize: none;
+}
+
+.description {
+    width: 100%;
+    resize: none;
+}
+
+.img {
+    margin-top: 4px;
+    float: right;
+    width: 200px;
+    height: 138px;
+    object-fit: contain;
+}
+
+.img-large {
+width: 500px;
+height: 350px;
+object-fit: cover;
+}
+
+/* Sets div height to contain image */
+.img-box {
+    height: 150px;
+}
+
+.item-box {
+    width: 80%;
+    margin: auto;
+    display: flex;
+    justify-content: center;
+}
+
+.item-spec {
+    width: 55%;
+    height: 350px;
+    display: inline-block;
+    margin-left: 0;
+    padding: 10px;
+}
+
+.image-url {
+    width: 70%;
+}
+
+.listing {
+    /* Item page */
+    padding: 0 4px;
+}
+
+.listings {
+    /* Styles each listing <div> in active listings area */
+    width: 90%;
+    border: 2px solid;
+    border-radius: 4px;
+    margin: auto;
+    margin-bottom: 15px;
+    padding: 4px;
+}
+
+.listing-foot {
+    display: flex;
+    justify-content: space-between;
+    border-bottom: solid black;
+}
+
+.message-popup {
+    margin-right: 10%;
+    margin-top: 5px;
+}
+
+.no-listings {
+    font-weight: 250;
+    font-size: 40px;
+    color: red;
+}
+
+.pad-item {
+    padding: 0 5px;
+}
+
+.post {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    margin-top: 8px;
+}
+
+.post-btn {
+    margin-top: 8px;
+    position: absolute;
+    margin-right: 5px;
+    right: 20%;
+    margin-bottom: 20px;
+}
+
+.start-price {
+    width: 10%;
+}
+
+.title {
+    width: 70%;
+    margin-bottom: 5px;
+}
