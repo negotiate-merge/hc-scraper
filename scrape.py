@@ -1,14 +1,12 @@
 from bs4 import BeautifulSoup, Comment
-import datetime
 import http.cookiejar
 import json
 from convert import makeHTML
 import mechanize
 import os
-import random
 import re
-import time
-# import urllib3
+import timers
+
 
 '''
 The site relys on the use of the users ID when carrying out search querys. To obtain the id for the user you which to find posts for
@@ -39,22 +37,10 @@ def login():
     # print(f[2])
     br.select_form(nr=2)
     br.form['login'] = 'negotiateMerge'
-    br.form['password'] = str(os.getenv('HCPWD'))
+    br.form['password'] = str(os.getenv('HCPWD'))               # Gets password from environment variable
+    # br.form['password'] = ''                                  # Set your password manually
     br.form.find_control('tos', nr=1).get('1').selected = True  # Fill Terms of service checkbox
     br.submit()
-
-
-def get_unix_time(year, month):
-    ''' Return unix time of the first of any given year, month '''
-    epoch = datetime.datetime(year, month, 1, 0, 0, 0).strftime('%s')
-    return epoch
-
-
-def human_delay(low, high):
-    ''' Used to generate random dealys to imitate typical human usage '''
-    delay = random.uniform(low, high)
-    time.sleep(round(delay, 1))
-
 
 # Globals
 links = []
@@ -69,73 +55,74 @@ if os.path.exists('output/links.txt'):
         # print(i[0], int(i[1]))
         # print(links)
 
-''' Search for user posts and put urls in to list '''
-def find_posts(year):
-    year_from = year                                    # Lower limit of search
-    year_to = year + 1                                  # Upper limit of search
-    month = 12
+''' Search for user posts, put all found urls in to list and save to file 'links.txt' '''
+def find_posts(year: int):
+    month = 12                                          # For iteration through months
+    tonight = timers.today(tonight=True)                         # Today in unix time
+    year_start_unix = timers.get_unix_time(year, 1)
+    year_end_unix = timers.get_unix_time(year + 1, 1)
+    
+    search_to = year_end_unix if year_end_unix < tonight else tonight           # Either tonight or end of the year
+    if search_to == tonight: month = timers.get_date(tonight).month             # Set the month in accordance with previous line
+    search_from = timers.get_unix_time(year, month)                             # Search the current month
 
-    while year_to != year_from:
-        # Divide year in to 12 even chunks, irrespective of month bounds
-        year_base = int(get_unix_time(year_to - 1, 1))
-        search_to = int(get_unix_time(year_to, 1))             
-        month_secs = int((search_to - year_base) / 12)      
-        search_from = search_to - month_secs + 1
+    ''' This is the MONTH loop '''
+    while month: # Search decending by 'month' within each year
+        ''' The search query expects an integer in the url after search/, the server creates a url for each search using this integer which 
+            serves as aroutable endpoint for the search, changing the from and to times in this url no effect on the rendered results. 
+            Removing the integer breaks the call, using an invalid integer forces the server to generate a new search. 
+        '''
+        dummy_digits = timers.randnum()                         # Creates an invalid integer for the URL
+        search_query = f'https://hotcopper.com.au/search/{dummy_digits}/?q=%2A&t=post&o=date&c[date-from]={search_from}&c[date-to]={search_to}&c[visible]=true&c[user][0]={user_id}'
+        br.open(search_query)
+        url_current = br.geturl()                               # Get resolved URL
+        next_page = 2
 
-        while search_from > year_base: # Search decending by 'month' within each year
-            ''' The query expects an integer in the url after search/, The server creates a url for each search using this integer, changing the from 
-                and to times has no effect on the rendered results. Removing the integer breaks the call, using an invalid integer forces the server to 
-                generate a new search. 
-            '''
-            dummy_digits = random.randint(100, 10000)
+        print(f'Month {month}\nsearching from {timers.get_date(search_from)}\tto\t{timers.get_date(search_to)}')
+        print(f'search from = {search_from}\tsearch_to = {search_to}')
+        print(f"Returned URL:\n{url_current}\n")
 
-            # Search query, the final element is the user ID 'c[user][0]=58380' You will need to search for a users posts to obtain this.
-            search_query = f'https://hotcopper.com.au/search/{dummy_digits}/?q=%2A&t=post&o=date&c[date-from]={search_from}&c[date-to]={search_to}&c[visible]=true&c[user][0]={user_id}'
-            search_to -= month_secs
-            search_from -= month_secs
-            br.open(search_query)
-            url_current = br.geturl()                           # Get destination URL
-            next_page = 2
+        link_count = 0
 
-            print(f'searching {month - 1}/{year_to - 1} - {month}/{year_to - 1}')
-            month -= 1
-            print(f"Returned URL:\n{url_current}\n")
+        ''' Loop through all pages in table. There can only be 8 pages in a table, I was getting the url after the query to check for redirection 
+            back to the final page however when geturl is called on page 7 it returns '\mhttps://hotcopper.com.au/search/' so I have limited the
+            pages returned by breaking the search into months as above.
+        '''
+        while next_page < 9:                # Based on the 8 page max regardless
+            ''' Get links from each page's table '''
+            soup = BeautifulSoup(br.response().read(), features='html5lib')
+            all_results = soup.find('table', {'class':'table is-fullwidth'})
+            try:
+                all_titles = all_results.find_all('td', {'class':['title-td no-overflow has-text-weight-semibold', 'title-td no-overflow has-text-weight-semibold alt-tr']})
+            except AttributeError:
+                print(f'Month {month} search completed, {link_count} links found on {next_page - 2} pages\n')
+                break
+            
+            for row in all_titles:
+                link = row.find('a', href=True)['href']
+                ''' The links extracted are to a single post, cutting the url from the final / takes us to the whole thread. '''
+                link = link[:link.rfind('/')+1]                 # Removes chars following the last '/'
+                link_count += 1
+                if link not in [lnk[0] for lnk in links]:
+                    links.append((link, year))
+                    with open('output/links.txt', 'a') as fp:
+                        fp.write('{} {}\n'.format(link, year))
 
-            link_count = 0
+            ''' Construct url to next search page results '''
+            parts = re.split("\?page=\d+&", url_current)            # split at page specifier
+            if len(parts) < 2: parts = url_current.split('?', 1)    # Split url at the ? (this is the first page)
+            parts.insert(1, f'?page={next_page}&')                  # Insert page number component
+            urlnext = ''.join(parts)                                # Reconstruct url
+                    
+            br.open(urlnext)
+            next_page += 1
+            timers.human_delay(3, 6)
 
-            ''' Loop through all pages in table. There can only be 8 pages in a table, I was getting the url after the query to check for redirection 
-                back to the final page however when geturl is called on page 7 it returns '\mhttps://hotcopper.com.au/search/' so I have limited the
-                pages returned breaking the search into months as above. '''
-            while next_page < 9:                # Based on the 8 page max regardless
-                ''' Get links from each page's table '''
-                soup = BeautifulSoup(br.response().read(), features='html5lib')
-                all_results = soup.find('table', {'class':'table is-fullwidth'})
-                try:
-                    all_titles = all_results.find_all('td', {'class':['title-td no-overflow has-text-weight-semibold', 'title-td no-overflow has-text-weight-semibold alt-tr']})
-                except AttributeError:
-                    print(f'Month {month + 1} search completed, {link_count} links on {next_page - 2} pages\n')
-                    break
-                
-                for row in all_titles:
-                    link = row.find('a', href=True)['href']
-                    ''' The links extracted are to a single post, cutting the url from the final / takes us to the whole thread. '''
-                    link = link[:link.rfind('/')+1]                 # Removes chars following the last '/'
-                    link_count += 1
-                    if link not in [lnk[0] for lnk in links]:
-                        links.append((link, year))
-                        with open('output/links.txt', 'a') as fp:
-                            fp.write('{} {}\n'.format(link, year))
+        month -= 1
+        if month:
+            search_from = timers.get_unix_time(year, month)    # Decrement by each month
+            search_to = timers.get_unix_time(year, month + 1) if month != 12 else year_end_unix
 
-                ''' Construct url to next search page results '''
-                parts = re.split("\?page=\d+&", url_current)            # split at page specifier
-                if len(parts) < 2: parts = url_current.split('?', 1)    # Split url at the ? (this is the first page)
-                parts.insert(1, f'?page={next_page}&')                  # Insert page number component
-                urlnext = ''.join(parts)                                # Reconstruct url
-                        
-                br.open(urlnext)
-                next_page += 1
-                human_delay(3, 6)
-        year_to -= 1
     print(f'Search returned {len(links)} links')
 
 
@@ -214,7 +201,7 @@ def get_user_posts(user, url, last):
             url_current = br.geturl()
             if 'page' in url_current: print(f'getting page {next_page}')
             next_page += 1
-            human_delay(2, 4)
+            timers.human_delay(2, 4)
 
         # Added for debugging
         print(user_posts)
@@ -225,9 +212,14 @@ def get_user_posts(user, url, last):
 
 
 login()
+
+
+# find_posts(2024)
+
+
 ''' Run the scraper, we know this users first post was in 2009 '''
-for year in range(2024, 2008, -1): find_posts(year)
-# find_posts(2023)
+for year in range(2024, 2022, -1): find_posts(year)     # 2008
+
 
 ### Use this to run on a single thread
 # get_user_posts(user, "https://hotcopper.com.au/threads/ann-steel-tube-rights-offer-reminder-to-shareholders.4386896/", last=False)
@@ -253,7 +245,7 @@ while current_year > final_year - 1:
     if current_year <= start_year:
         for l in loop_list[:-1]:
             print(f'getting posts for {current_year} from link {loop_list.index(l) + 1} of {len(loop_list)} {l}')
-            human_delay(3, 6)
+            timers.human_delay(3, 6)
             get_user_posts(user, domain + l, last=False)
 
         print(f'getting posts for {current_year} from link {loop_list.index(loop_list[-1]) + 1} of {len(loop_list)} {links[-1]}')
