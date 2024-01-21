@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup, Comment
+import csv
 import http.cookiejar
 import json
 from convert import makeHTML
@@ -9,7 +10,7 @@ import timers
 
 
 '''
-The site relys on the use of the users ID when carrying out search querys. To obtain the id for the user you which to find posts for
+The site relys on the use of the users ID when carrying out search querys. To obtain the id for the user you wish to find posts for
 navigate to 'https://hotcopper.com.au/search/' and enter the username in the Author section, then click search. The resulting URL
 contains the user ID in the form of an integer at the end of the string.
 EG) 'https://hotcopper.com.au/search/2244852/?q=%2A&t=post&o=date&c[visible]=true&c[user][0]=54321'
@@ -17,8 +18,13 @@ EG) 'https://hotcopper.com.au/search/2244852/?q=%2A&t=post&o=date&c[visible]=tru
 In this case 54321 is the user ID, populate the user and user_id fields below accordingly.
 '''
 
-user = 'boysy1'
-user_id = 58380
+with open('creds.csv') as creds:
+    reader = csv.reader(creds, delimiter=',')
+    row = next(reader)
+    login_user = row[0]
+    login_pwd = row[1]
+    user = row[2]
+    user_id = row[3]
 
 ''' Set up browser '''
 cj = http.cookiejar.CookieJar()     # Cookie handling object
@@ -27,8 +33,6 @@ br.set_handle_robots(False)         # Ignore robots.txt constraints
 # Add valid browser headers in accordance with my own machine
 br.addheaders = [('User-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')]
 br.set_cookiejar(cj)                # Set cookie handler in browser object
-# print resp.info()                 # Show headers
-# print resp.read()                 # Show content
 
 ''' Login '''
 def login():
@@ -36,19 +40,20 @@ def login():
     # f = br.forms()                    # Returns list of forms on the page
     # print(f[2])
     br.select_form(nr=2)
-    br.form['login'] = 'negotiateMerge'
-    br.form['password'] = str(os.getenv('HCPWD'))               # Gets password from environment variable
-    # br.form['password'] = ''                                  # Set your password manually
+    br.form['login'] = login_user
+    br.form['password'] = login_pwd
     br.form.find_control('tos', nr=1).get('1').selected = True  # Fill Terms of service checkbox
     br.submit()
+
+
 
 # Globals
 links = []
 domain = 'https://hotcopper.com.au'
 
 # Load link list from previous runs if file exists
-if os.path.exists('output/links.txt'):
-    with open('output/links.txt', 'r') as fp:
+if os.path.exists('links.txt'):
+    with open('links.txt', 'r') as fp:
         raw_links = [list(map(str, l.split(' '))) for l in fp]
 
     for i in raw_links: links.append((i[0], int(i[1])))
@@ -57,8 +62,8 @@ if os.path.exists('output/links.txt'):
 
 ''' Search for user posts, put all found urls in to list and save to file 'links.txt' '''
 def find_posts(year: int):
-    month = 12                                          # For iteration through months
-    tonight = timers.today(tonight=True)                         # Today in unix time
+    month = 12                                                  # Month counter
+    tonight = timers.today(tonight=True)                        # Today in unix time
     year_start_unix = timers.get_unix_time(year, 1)
     year_end_unix = timers.get_unix_time(year + 1, 1)
     
@@ -105,7 +110,7 @@ def find_posts(year: int):
                 link_count += 1
                 if link not in [lnk[0] for lnk in links]:
                     links.append((link, year))
-                    with open('output/links.txt', 'a') as fp:
+                    with open('links.txt', 'a') as fp:
                         fp.write('{} {}\n'.format(link, year))
 
             ''' Construct url to next search page results '''
@@ -126,7 +131,7 @@ def find_posts(year: int):
     print(f'Search returned {len(links)} links')
 
 
-def get_user_posts(user, url, last):
+def get_user_posts(user, url, last, file_name):
     ''' Get all user posts from a given thread url. '''
     br.open(url)
     url_current = br.geturl()
@@ -138,121 +143,159 @@ def get_user_posts(user, url, last):
         'thread_url' : f'{url}',
         'user': f'{user}',
         'posts': []
-    }
+    }  
 
-    with open('output/output.json', 'a') as f:
+    with open(file_name, 'a') as f:
         ''' Accessing a page out of bounds redirects to the previous page, we use this as the loop condition. '''
         while url_current != url_previous:
+            print(f'url current {url_current}')
             url_previous = url_current
             soup = BeautifulSoup(br.response().read(), features='html5lib')
+
+            # soup = soup.text    ## Added to try to fix find_all returning only one post div
             posts = soup.find_all('div', {'class':'message-columns'})
             write_thread_title = 0
+
+            print(f'Number of posts: {len(posts)}')
             
             ''' Process and append each valid thread post to user_posts['posts'] '''
             for p in posts:
                 try:
                     name_div = p.find('div', {'class':'user-username'})
                     name = name_div.find('a').text          # Get username of poster
-                except AttributeError:
+                except AttributeError:                      # Throws error if name is None
                     # Don't know why this is occuring, perhaps the user is no longer current and therefore no link is present
                     print(f'{name_div} has no find attribute when trying to retreive username')
-                if name != user: continue
-                elif write_thread_title < 1:        # Write thread title once only
-                    user_posts['title'] = url_current.split('/')[-2].split('.')[-2].replace('-', ' ')
-                    write_thread_title = 1
+
+                if name == user: 
+                    if write_thread_title < 1:                # Write thread title once only
+                        user_posts['title'] = url_current.split('/')[-2].split('.')[-2].replace('-', ' ')
+                        write_thread_title = 1
                 
-                try:
-                    # Only a post from a user (not the host) will contain this div
-                    foot = p.find('div', {'class':'message-user-metadata message-user-metadata-sentiment'})
-                    footSpans = foot.find_all('span')
-                    date = p.find('div', {'class':'post-metadata-date'}).text
-                    time =  p.find('div', {'class':'post-metadata-time'}).text
-                    post = p.find('blockquote', {'class':'message-text ugc baseHtml'})
-                    print(post.text)
                     try:
-                        # Only a reply to a previous post will contain this element we need to delete it
-                        post.find('div', {'class':'bbCodeBlock bbCodeQuote'}).decompose()
+                        # Only a post from a user (not the host) will contain this div
+                        foot = p.find('div', {'class':'message-user-metadata message-user-metadata-sentiment'})
+                        footSpans = foot.find_all('span')
+                        date = p.find('div', {'class':'post-metadata-date'}).text
+                        time =  p.find('div', {'class':'post-metadata-time'}).text
+                        post = p.find('blockquote', {'class':'message-text ugc baseHtml'})
+                        # print(post.text)
+                        try:
+                            # Only a reply to a previous post will contain this element, we need to delete it
+                            post.find('div', {'class':'bbCodeBlock bbCodeQuote'}).decompose()
+                        except AttributeError:
+                            pass        # Proceed if element not present
+
+                        '''' This was supposed to fix json not serializable on year 2017 post containing html comment - did not work. '''
+                        # for element in post(text=lambda text: isinstance(text, Comment)):
+                        #     element.extract()
+
+                        stock = foot.find('a').text
+                        price = footSpans[1].text.lstrip().replace('\n                        ', ' ').rstrip()
+                        sentiment = footSpans[2].text.lstrip()
+                        disclosure = footSpans[3].text.lstrip()
+
+                        post = {
+                            'date': date,
+                            'time': time,
+                            'post': post.text.lstrip().rstrip(),
+                            'stock': stock,
+                            'price': price,
+                            'sentiment': sentiment,
+                            'disclosure': disclosure,
+                        }
                     except AttributeError:
-                        pass        # Proceed if element not present
-                    for element in post(text=lambda text: isinstance(text, Comment)):
-                        element.extract()
+                        pass            # The footer element was not found, skip
+                    user_posts['posts'].append(post)
 
-                    stock = foot.find('a').text
-                    price = footSpans[1].text.lstrip().replace('\n                        ', ' ').rstrip()
-                    sentiment = footSpans[2].text.lstrip()
-                    disclosure = footSpans[3].text.lstrip()
-
-                    post = {
-                        'date': date,
-                        'time': time,
-                        'post': post.text.lstrip().rstrip(),
-                        'stock': stock,
-                        'price': price,
-                        'sentiment': sentiment,
-                        'disclosure': disclosure,
-                    }
-                except AttributeError:
-                    pass            # The footer element was not found, skip
-                user_posts['posts'].append(post)
-
-            ''' Construct url for proceeding pages '''
-            if 'page' in url_current: url_current = url_current[:url_current.rfind('page')]
-            br.open(url_current + f'page-{next_page}')
-            url_current = br.geturl()
-            if 'page' in url_current: print(f'getting page {next_page}')
+            ''' Open additional pages. '''
+            if 'page' not in url_current:
+                # Open a second page, redirects to previous page if not found (loop condition)
+                print(f'Checking for page {next_page} posts')
+                br.open(url_current + f'page-{next_page}')
+                url_current = br.geturl()
+            else:
+                url_current = url_current[:url_current.rfind('page')] # Removes from page rightwards
+                br.open(url_current + f'page-{next_page}')
+                url_current = br.geturl()
+                print(f'Checking for page {next_page}')
             next_page += 1
             timers.human_delay(2, 4)
 
         # Added for debugging
-        print(user_posts)
+        # print(user_posts)
 
         ''' Output json, format between posts/threads accordingly ''' 
         output =  json.dumps(user_posts, ensure_ascii=False, indent=2)
         f.write(output + ('\n' if last else ',\n'))
 
 
+
+
 login()
-
-
 # find_posts(2024)
 
-
 ''' Run the scraper, we know this users first post was in 2009 '''
-for year in range(2024, 2022, -1): find_posts(year)     # 2008
+# for year in range(2024, 2022, -1): find_posts(year)             # 2008 will set 2009 as the start year
 
 
 ### Use this to run on a single thread
 # get_user_posts(user, "https://hotcopper.com.au/threads/ann-steel-tube-rights-offer-reminder-to-shareholders.4386896/", last=False)
 
-current_year = links[0][1]            # When starting from fresh use this
-start_year = 2018                     # Start from a specific year
-final_year = links[-1][1]
-tlinks = len(links)
-x = 0
+''' Configuration area
 
+    RECONFIGURE THIS PART AND THEN RUN TO SEE IF WE ARE SAVING JSON
+     
+ '''
+
+links = sorted(links, key=lambda x:int(x[1]), reverse=True)     # Sort list by year prior to scraping
+
+''' TESTING '''
+start_year = 2024                       # Start from a specific year
+final_year = 2023
+current_year = start_year
+
+
+''' PRODUCTION ''' """
+start_year = 2024
+current_year = links[0][1]              # When starting from fresh use this
+final_year = links[-1][1]               
+"""
+total_links = len(links)
+x = 0
+onetime = False
+  
 while current_year > final_year - 1:
-    # Write to json file json
-    f = open('output/output.json', 'w')
-    f.write('[\n')
-    f.close()
     loop_list = []
-    for c in range(x, tlinks):
+    # Get the links from a given year, append to loop_list
+    for c in range(x, total_links):
         if links[c][1] == current_year: loop_list.append(links[c][0])
         else:
-            x = c
-            break
+            x = c                       # Value of starting point for next year range
+            break                       # We have reached a new year so we break
     
     if current_year <= start_year:
-        for l in loop_list[:-1]:
-            print(f'getting posts for {current_year} from link {loop_list.index(l) + 1} of {len(loop_list)} {l}')
-            timers.human_delay(3, 6)
-            get_user_posts(user, domain + l, last=False)
+        # Write each year to json
+        file_name = f'json/{user}_posts_{current_year}.json'
+        f = open(file_name, 'w')
+        f.write('[\n')
+        f.close()
 
-        print(f'getting posts for {current_year} from link {loop_list.index(loop_list[-1]) + 1} of {len(loop_list)} {links[-1]}')
-        get_user_posts(user, domain + loop_list[-1], last=True)
+        # Do the onetime logic here
+        if onetime:
+            get_user_posts(user=user, url='https://hotcopper.com.au/threads/ann-2023-drilling-update.7448008/', last=False, file_name=file_name)
+        else:
+            for l in loop_list[:-1]:        # Excludes last item, handled differently below
+                print(f'getting posts for {current_year} from link {loop_list.index(l) + 1} of {len(loop_list)} {l}')
+                timers.human_delay(3, 6)
+                get_user_posts(user=user, url=domain + l, last=False, file_name=file_name)
+                
 
-        f = open('output/output.json', 'a')
+            print(f'getting posts for {current_year} from link {loop_list.index(loop_list[-1]) + 1} of {len(loop_list)} {links[-1]}')
+            get_user_posts(user=user, url=domain + loop_list[-1], last=True, file_name=file_name)
+
+        f = open(file_name, 'a')
         f.write(']')
         f.close()
-        makeHTML()
+        makeHTML(file_name)
     current_year -= 1
