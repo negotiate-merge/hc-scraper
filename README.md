@@ -9,9 +9,6 @@
   We want to know exactly where the scraper crashed so we can recommence from that point when the fix is made.
 - I have a feeling that despite my best efforts, I may have duplicate links and duplicate data.. looking at the json for 2024, there are entrys in there from 2023. Need to properly define what constitutes a thread belonging to a certain year. Is it when the thread was created or when the latest user post was? Latest post is a changing thing if you want to work on data already collected it would require alot of processing. date of creation is probably the best option here. Everything is fixed in time that way.
 
-## Abandoning for now
-- Getting password from environment variable. Maybe in the future we can load this from a file located elsewhere in the system that has certain read premissions but not worrying about that for now.
-
 ## Nice to have in the future
 - Redo get_user_posts json entrys could be updated in place.
 - makeHTML should create a new file regardless of a file existing with the same name. We have changed the program to write all years data to json so we are not reusing the json file for each year anymore.

@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup, Comment
+import csv
 import http.cookiejar
 import json
 from convert import makeHTML
@@ -18,8 +19,13 @@ EG) 'https://hotcopper.com.au/search/2244852/?q=%2A&t=post&o=date&c[visible]=tru
 In this case 54321 is the user ID, populate the user and user_id fields below accordingly.
 '''
 
-user = 'boysy1'
-user_id = 58380
+with open('creds.csv') as creds:
+    reader = csv.reader(creds, delimiter=',')
+    row = next(reader)
+    login_user = row[0]
+    login_pwd = row[1]
+    user = row[2]
+    user_id = row[3]
 
 ''' Set up browser '''
 cj = http.cookiejar.CookieJar()     # Cookie handling object
@@ -28,8 +34,6 @@ br.set_handle_robots(False)         # Ignore robots.txt constraints
 # Add valid browser headers in accordance with my own machine
 br.addheaders = [('User-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')]
 br.set_cookiejar(cj)                # Set cookie handler in browser object
-# print resp.info()                 # Show headers
-# print resp.read()                 # Show content
 
 ''' Login '''
 def login():
@@ -37,8 +41,8 @@ def login():
     # f = br.forms()                    # Returns list of forms on the page
     # print(f[2])
     br.select_form(nr=2)
-    br.form['login'] = 'negotiateMerge'
-    br.form['password'] = 'e6R@ESsZm*T5.Y#'                                  # Set your password manually
+    br.form['login'] = login_user
+    br.form['password'] = login_pwd
     br.form.find_control('tos', nr=1).get('1').selected = True  # Fill Terms of service checkbox
     br.submit()
 
