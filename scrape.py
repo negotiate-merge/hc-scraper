@@ -2,6 +2,7 @@ from bs4 import BeautifulSoup, Comment
 import csv
 import http.cookiejar
 import json
+import logging
 from convert import makeHTML
 import mechanize
 import os
@@ -9,23 +10,23 @@ import re
 import sys
 import timers
 
+# Configure logging
+logging.basicConfig(filename='scraper.log', encoding='utf-8', level=logging.DEBUG, \
+                    format='%(asctime)s %(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 
-'''
+''' Load credentials for logged in user, user to be searched.
     The site relys on the use of the users ID when carrying out search querys. To obtain the id for the user you wish to find posts for
     navigate to 'https://hotcopper.com.au/search/' and enter the username in the Author section, then click search. The resulting URL
     contains the user ID in the form of an integer at the end of the string.
 EG) 'https://hotcopper.com.au/search/2244852/?q=%2A&t=post&o=date&c[visible]=true&c[user][0]=54321'
 
-    In this case 54321 is the user ID, populate the user and user_id fields below accordingly.
-'''
+    In this case 54321 is the user ID.
 
-''' Load credentials for logged in user, user to be searched. 
-    creds.csv should be structured as follows
+    You will need to create a file named creds.csv in the working directory that is structured as follows: 
+
     your-user-account,your-password,user-you-are-searching,searched-user-id
 Eg) username,password,bigTimeTrader,98765
 '''
-
-''' Load credentials '''
 try:
     with open('creds.csv') as creds:
         reader = csv.reader(creds, delimiter=',')
@@ -36,13 +37,14 @@ try:
         user_id = row[3]
 except FileNotFoundError:
     print("creds.csv file not found")
-    sys.exit(-1)
+    logging.ERROR('creds.csv not found in working directory')
+    sys.exit(1)
 
 ''' Set up browser '''
 cj = http.cookiejar.CookieJar()     # Cookie handling object
 br = mechanize.Browser()            # Create a browser object
 br.set_handle_robots(False)         # Ignore robots.txt constraints
-# Add valid browser headers in accordance with my own machine
+# Add valid browser headers
 br.addheaders = [('User-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')]
 br.set_cookiejar(cj)                # Set cookie handler in browser object
 
@@ -57,33 +59,43 @@ def login():
     br.form.find_control('tos', nr=1).get('1').selected = True  # Fill Terms of service checkbox
     br.submit()
 
+    # Verify login procedure, log accordingly
+    if cj._cookies['.hotcopper.com.au']['/']['xf_user']:
+        logging.info('Login successful')
+    else:
+        logging.error('Login failed')
+        print('Login failed, ensure your credentials are accurate')
+        sys.exit(1)
 
 
-# Globals
-links = []
-domain = 'https://hotcopper.com.au'
+def load_links():
+    ''' Load link list from previous runs if file exists '''
+    if os.path.exists('links.txt'):
+        with open('links.txt', 'r') as fp:
+            raw_links = [list(map(str, l.split(' '))) for l in fp]
 
-''' Load link list from previous runs if file exists '''
-if os.path.exists('links.txt'):
-    with open('links.txt', 'r') as fp:
-        raw_links = [list(map(str, l.split(' '))) for l in fp]
+        for i in raw_links: links.append((i[0], int(i[1])))
+            # print(i[0], int(i[1]))
+            # print(links)
+        logging.info('loaded %s links from file', len(links))
+    else:
+        logging.info('links.txt file not found')
 
-    for i in raw_links: links.append((i[0], int(i[1])))
-        # print(i[0], int(i[1]))
-        # print(links)
 
 ''' Search for user posts, put all found urls in to list and save to file 'links.txt' '''
 def find_posts(year: int):
-    month = 12                                                  # Month counter
-    tonight = timers.today(tonight=True)                        # Today in unix time
-    # year_start_unix = timers.get_unix_time(year, 1)             # Is this now obselete?
+    month = 12                                                      # Month counter
+    tonight = timers.today(tonight=True)                            # Today in unix time
     year_end_unix = timers.get_unix_time(year + 1, 1)
     
-    search_to = year_end_unix if year_end_unix < tonight else tonight           # Either tonight or end of the year
+    search_to = year_end_unix if year_end_unix < tonight else tonight           # Either tonight or end of the year (unix time)
     if search_to == tonight: month = timers.get_date(tonight).month             # Set the month in accordance with previous line
     search_from = timers.get_unix_time(year, month)                             # Search the current month
 
-    ''' This is the MONTH loop '''
+    logging.info('Crawler started')
+    urls_found = 0
+
+    ''' Loop through all months in year '''
     while month: # Search decending by 'month' within each year
         ''' The search query expects an integer in the url after search/, the server creates a url for each search using this integer which 
             serves as a routable endpoint for the search, changing the from and to times in this url not effect on the rendered results. 
@@ -113,6 +125,9 @@ def find_posts(year: int):
                 all_titles = all_results.find_all('td', {'class':['title-td no-overflow has-text-weight-semibold', 'title-td no-overflow has-text-weight-semibold alt-tr']})
             except AttributeError:
                 print(f'Month {month} search completed, {link_count} links found on {next_page - 2} pages\n')
+                # logging.info('%()s %()s returned %()s from %()s for %()s', month, year, link_count, next_page - 2, str(user))
+                logging.info(f"{month} {year} returned {link_count} links from {next_page - 2} pages for {user}")
+                urls_found += link_count
                 break
             
             for row in all_titles:
@@ -141,7 +156,7 @@ def find_posts(year: int):
             search_from = timers.get_unix_time(year, month)         # Decrement by each month
             search_to = timers.get_unix_time(year, month + 1) if month != 12 else year_end_unix
 
-    print(f'Search returned {len(links)} links')
+    print(f"Found {urls_found} urls for {year}")
 
 
 def get_user_posts(user, url):
@@ -179,6 +194,7 @@ def get_user_posts(user, url):
             except AttributeError:                      # Throws error if name is None
                 # Don't know why this is occuring, perhaps the user is no longer current and therefore no link is present
                 print(f'{name_div} has no find attribute when trying to retreive username')
+                logging.warning(f'User name is None for post #{posts.index(p)} on {url_current}')
 
             if name == user: 
                 if write_thread_title < 1:              # Write thread title once only
@@ -236,69 +252,91 @@ def get_user_posts(user, url):
         next_page += 1
         timers.human_delay(2, 4)
 
-    return json.dumps(user_posts, ensure_ascii=False, indent=2)
+    try:
+        return json.dumps(user_posts, ensure_ascii=False, indent=2)
+    except TypeError:
+        logging.exception('Error serializing JSON')
+        logging.info(user_posts)
+        raise TypeError('Error ouputting JSON, check logs')
 
 
+# Globals
+links = []
+domain = 'https://hotcopper.com.au'
+
+def main():
+    global links                    # https://realpython.com/python-use-global-variable-in-function/
+    logging.info('Program started')
+    login()
+    load_links()
+    find_posts(2024)
+
+    ''' Run the crawler, we know this users first post was in 2009. Once you have all the links from the past you will only need to run
+        the crawler preiodically on the time period since your last run. Typically the last one to two years. '''
+    # for year in range(2024, 2022, -1): find_posts(year)             # 2008 will set 2009 as the start year
+
+    links = sorted(links, key=lambda x:int(x[1]), reverse=True)     # Sort list by year prior to scraping
+
+    ''' TESTING '''
+    start_year = 2024                       # Get posts from this year,
+    final_year = 2024                       # To this year (can be the same as start year)
+    current_year = start_year
 
 
-login()
-# find_posts(2024)
+    ''' FULL RUN ''' """
+    start_year = 2024
+    current_year = links[0][1]              # When starting from fresh use this
+    final_year = links[-1][1]               
+    """
 
-''' Run the scraper, we know this users first post was in 2009. Once you have all the links from the past you will only need to run
-    the crawler preiodically on the time period since your last run. Typically the last one to two years. '''
-# for year in range(2024, 2022, -1): find_posts(year)             # 2008 will set 2009 as the start year
-
-links = sorted(links, key=lambda x:int(x[1]), reverse=True)     # Sort list by year prior to scraping
-
-''' TESTING '''
-start_year = 2024                       # Get posts from this year,
-final_year = 2024                       # To this year (can be the same as start year)
-current_year = start_year
+    # Error prone URLS
+    # https://hotcopper.com.au/threads/ann-steel-tube-rights-offer-reminder-to-shareholders.4386896/        JSON not serializable due to tag
 
 
-''' FULL RUN ''' """
-start_year = 2024
-current_year = links[0][1]              # When starting from fresh use this
-final_year = links[-1][1]               
-"""
-total_links = len(links)                # Sum of all links found
-x = 0
-onetime = False
-  
-while current_year > final_year - 1:
-    loop_list = []                      # Holds all links for the current year
-    # Get the links from a given year, append to loop_list
-    for c in range(x, total_links):
-        if links[c][1] == current_year: loop_list.append(links[c][0])
-        else:
-            x = c                       # Value of starting point for next year range
-            break                       # We have reached a new year so we break
-    
-    if current_year <= start_year:
-        # Write each year to json
-        file_name = f'json/{user}_posts_{current_year}.json'
-        f = open(file_name, 'w')
-        f.write('[\n')
-        f.close()
+    total_links = len(links)                # Sum of all links found
+    x = 0
+    onetime = True                           # Used for debugging a specific forum thread, amed thread url further down
+    scrape = True
 
-        with open(file_name, 'a') as f:
-            # Do the onetime logic here
-            if onetime:
-                output = get_user_posts(user=user, url='https://hotcopper.com.au/threads/ann-2023-drilling-update.7448008/')
-                f.write(output + '\n')
-            else:
-                for l in loop_list[:-1]:        # Excludes last item, handled differently below
-                    print(f'getting posts for {current_year} from link {loop_list.index(l) + 1} of {len(loop_list)} {l}')
-                    timers.human_delay(3, 6)
-                    output = get_user_posts(user=user, url=domain + l)
-                    f.write(output + ',\n')
-                    
-                print(f'getting posts for {current_year} from link {loop_list.index(loop_list[-1]) + 1} of {len(loop_list)} {loop_list[-1]}')
-                output = get_user_posts(user=user, url=domain + loop_list[-1])
-                f.write(output + '\n')
+    if scrape:
+        while current_year > final_year - 1:
+            loop_list = []                      # Holds all links for the current year
+            # Get the links from a given year, append to loop_list
+            for c in range(x, total_links):
+                if links[c][1] == current_year: loop_list.append(links[c][0])
+                else:
+                    x = c                       # Value of starting point for next year range
+                    break                       # We have reached a new year so we break
+            
+            if current_year <= start_year:
+                # Write each year to json
+                file_name = f'json/{user}_posts_{current_year}.json'
+                f = open(file_name, 'w')
+                f.write('[\n')
+                f.close()
 
-            f.write(']')
-            f.close()
-            makeHTML(file_name)
+                with open(file_name, 'a') as f:
+                    # Do the onetime logic here
+                    if onetime:
+                        output = get_user_posts(user=user, url='https://hotcopper.com.au/threads/ann-2023-drilling-update.7448008/')
+                        f.write(output + '\n')
+                    else:
+                        for l in loop_list[:-1]:        # Excludes last item, handled differently below
+                            print(f'getting posts for {current_year} from link {loop_list.index(l) + 1} of {len(loop_list)} {l}')
+                            timers.human_delay(3, 6)
+                            output = get_user_posts(user=user, url=domain + l)
+                            f.write(output + ',\n')
+                            
+                        print(f'getting posts for {current_year} from link {loop_list.index(loop_list[-1]) + 1} of {len(loop_list)} {loop_list[-1]}')
+                        output = get_user_posts(user=user, url=domain + loop_list[-1])
+                        f.write(output + '\n')
 
-    current_year -= 1
+                    f.write(']')
+                    f.close()
+                    makeHTML(file_name)
+
+            current_year -= 1
+
+
+if __name__ == '__main__':
+    main()
